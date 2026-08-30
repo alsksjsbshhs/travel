@@ -217,6 +217,8 @@ class DriverCreate(BaseModel):
     status: Optional[str] = Field(default="offline", max_length=32)
     current_vehicle_id: Optional[str] = None
     rating: Optional[float] = Field(default=0, ge=0)
+    # Rate fee /hari andalan — prefill otomatis di dialog Assign dispatch (tetap bisa diubah per keberangkatan).
+    default_fee_rate: Optional[float] = Field(default=None, ge=0)
 
 
 class DriverUpdate(BaseModel):
@@ -227,6 +229,7 @@ class DriverUpdate(BaseModel):
     status: Optional[str] = Field(default=None, max_length=32)
     current_vehicle_id: Optional[str] = None
     rating: Optional[float] = Field(default=None, ge=0)
+    default_fee_rate: Optional[float] = Field(default=None, ge=0)
 
 
 class CustomerCreate(BaseModel):

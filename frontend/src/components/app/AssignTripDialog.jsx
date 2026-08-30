@@ -18,6 +18,7 @@ export default function AssignTripDialog({ open, onOpenChange, booking, onSaved 
   const [driverId, setDriverId] = useState("");
   const [vehicleId, setVehicleId] = useState("");
   const [feeRate, setFeeRate] = useState("");
+  const [tripHasFee, setTripHasFee] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -31,17 +32,26 @@ export default function AssignTripDialog({ open, onOpenChange, booking, onSaved 
     setDriverId(booking?.driver_id || "");
     setVehicleId(booking?.vehicle_id || "");
     setFeeRate("");
+    setTripHasFee(false);
     // Prefill rate fee yang sudah tersimpan (re-assign) — kosong = fee dihapus, jadi harus
     // terlihat nilai lamanya agar tidak terhapus tanpa sadar.
     if (booking?.id) {
       apiClient.get(`/dispatch/${booking.id}/detail`)
         .then((r) => {
           const rate = r.data?.trip?.driver_fee_rate;
-          if (rate) setFeeRate(String(rate));
+          if (rate) { setFeeRate(String(rate)); setTripHasFee(true); }
         })
         .catch(() => {});
     }
   }, [open, booking]);
+
+  // Prefill dari FEE DEFAULT driver terpilih (master Driver) — hanya bila trip belum punya
+  // rate & field masih kosong; tetap bisa diubah per keberangkatan.
+  useEffect(() => {
+    if (tripHasFee || !driverId) return;
+    const d = drivers.find((x) => x.id === driverId);
+    if (d && Number(d.default_fee_rate) > 0) setFeeRate((cur) => cur || String(d.default_fee_rate));
+  }, [driverId, drivers, tripHasFee]);
 
   const feeDays = (() => {
     const s = new Date(booking?.start_datetime || "").getTime();

@@ -13,7 +13,7 @@ const STATUSES = [
   { v: "online", l: "Online" }, { v: "resting", l: "Istirahat" }, { v: "offline", l: "Offline" },
 ];
 const toDateInput = (v) => (v ? String(v).slice(0, 10) : "");
-const EMPTY = { name: "", phone: "", sim_number: "", sim_expiry: "", status: "offline", rating: "" };
+const EMPTY = { name: "", phone: "", sim_number: "", sim_expiry: "", status: "offline", rating: "", default_fee_rate: "" };
 
 export default function DriverFormDialog({ open, onOpenChange, initial, onSaved }) {
   const editing = Boolean(initial && initial.id);
@@ -25,7 +25,7 @@ export default function DriverFormDialog({ open, onOpenChange, initial, onSaved 
     setForm(editing ? {
       name: initial.name || "", phone: initial.phone || "", sim_number: initial.sim_number || "",
       sim_expiry: toDateInput(initial.sim_expiry), status: initial.status || "offline",
-      rating: initial.rating ?? "",
+      rating: initial.rating ?? "", default_fee_rate: initial.default_fee_rate ?? "",
     } : EMPTY);
   }, [open, editing, initial]);
 
@@ -40,6 +40,7 @@ export default function DriverFormDialog({ open, onOpenChange, initial, onSaved 
     const payload = {
       name: form.name.trim(), phone: form.phone, sim_number: form.sim_number,
       sim_expiry: form.sim_expiry || null, status: form.status, rating: Number(form.rating) || 0,
+      default_fee_rate: Number(form.default_fee_rate) || 0,
     };
     try {
       if (editing) await apiClient.patch(`/drivers/${initial.id}`, payload);
@@ -94,6 +95,10 @@ export default function DriverFormDialog({ open, onOpenChange, initial, onSaved 
               <Label>Rating (0-5)</Label>
               <Input type="number" step="0.1" min="0" max="5" value={form.rating} onChange={(e) => set("rating", e.target.value)} placeholder="4.8" data-testid="df-rating" />
             </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Fee Default /hari (Rp) — prefill otomatis saat assign dispatch</Label>
+            <Input type="number" min="0" value={form.default_fee_rate} onChange={(e) => set("default_fee_rate", e.target.value)} placeholder="mis. 150000 (kosong = tanpa prefill)" data-testid="df-default-fee" />
           </div>
         </div>
         <DialogFooter className="mt-2">

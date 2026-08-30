@@ -46,7 +46,9 @@ async def create_driver(body: DriverCreate, user=Depends(MANAGER)):
         "status": must_be_choice(body.status, DRIVER_STATUSES,
                                  field_label="Status sopir", default="offline"),
         "current_vehicle_id": await must_exist(db, "vehicles", body.current_vehicle_id),
-        "rating": float(body.rating or 0), "created_at": now_iso(),
+        "rating": float(body.rating or 0),
+        "default_fee_rate": float(body.default_fee_rate) if body.default_fee_rate else None,
+        "created_at": now_iso(),
     }
     await db.drivers.insert_one(doc)
     await record(db, actor=user, action="create", entity_type="driver", entity_id=doc["id"],
@@ -85,6 +87,9 @@ async def update_driver(driver_id: str, body: DriverUpdate, user=Depends(MANAGER
     updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     if "rating" in updates:
         updates["rating"] = float(updates["rating"])
+    if "default_fee_rate" in updates:
+        # 0 = hapus rate default (kembali tanpa prefill).
+        updates["default_fee_rate"] = float(updates["default_fee_rate"]) or None
     # INV-REF-01: status wajib dari daftar, dan unit yang ditempelkan ke sopir wajib NYATA
     # (audit menemukan `current_vehicle_id` hantu diterima → "sopir memegang unit" yang
     # tidak pernah ada, dan kolom armada di tabel Driver menampilkan "-" selamanya).

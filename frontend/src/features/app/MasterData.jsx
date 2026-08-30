@@ -7,6 +7,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { LoadingState, ErrorState } from "@/components/shared/DataStates";
+import AddonMasterPanel from "@/components/app/AddonMasterPanel";
 
 // Master Data referensi (INV-REF-02): SATU tempat kelola titik jemput, destinasi & kota.
 // Rename di sini CASCADE ke dokumen pemakai; nonaktif = hilang dari selector form.
@@ -289,6 +290,7 @@ export default function MasterData() {
         <Panel icon={Landmark} title="Destinasi (sisi ops)" kind="dest" rows={dests} busy={busy}
           desc="Dipakai booking, lead CRM, penawaran & form web. Gabung menyatukan destinasi kembar (bisa dibatalkan). Konten halaman web dikelola di Konten Web; nonaktif di sini tidak menurunkan halaman publik."
           onRename={renameDest} onToggle={toggleDest} onMerge={mergeDest} onUnmerge={unmergeDest} testId="md-dest-panel" />
+        <AddonMasterPanel />
       </div>
     </div>
   );
