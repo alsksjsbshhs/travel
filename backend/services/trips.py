@@ -8,7 +8,7 @@
 - finalize_trip_completion: SSOT penyelesaian trip (RC-03) — dipakai driver/checkout
   DAN trips/{id}/status=completed agar efek samping identik (anti split-brain).
 """
-from core_utils import now_iso, safe_doc
+from core_utils import money, new_id, now_iso, safe_doc
 
 
 def compute_distance(odometer_start, odometer_end, est_distance_km=None):
@@ -162,6 +162,25 @@ async def finalize_trip_completion(db, trip: dict, user=None, odometer_end=None)
             except Exception:  # noqa: BLE001
                 pass
 
+    # (3b) Kredit FEE driver per keberangkatan (rate ditetapkan saat assign) — idempotent
+    # per trip: trip yang sama tidak pernah menambah saldo dua kali.
+    fresh = await db.trips.find_one({"id": trip_id}, {"_id": 0}) or trip
+    if fresh.get("driver_id") and float(fresh.get("driver_fee_rate") or 0) > 0:
+        dup = await db.driver_fee_entries.find_one({"trip_id": trip_id}, {"_id": 0, "id": 1})
+        if not dup:
+            bk_fee = await db.bookings.find_one({"id": fresh.get("booking_id")}, {"_id": 0, "code": 1}) or {}
+            drv_fee = await db.drivers.find_one({"id": fresh["driver_id"]}, {"_id": 0, "name": 1}) or {}
+            days = max(1, int(fresh.get("driver_fee_days") or 1))
+            rate = money(fresh.get("driver_fee_rate"))
+            amount = money(fresh.get("driver_fee_total") or rate * days)
+            await db.driver_fee_entries.insert_one({
+                "id": new_id("dfe"), "driver_id": fresh["driver_id"],
+                "driver_name": drv_fee.get("name"), "trip_id": trip_id,
+                "booking_id": fresh.get("booking_id"), "booking_code": bk_fee.get("code"),
+                "rate": rate, "days": days, "amount": amount,
+                "status": "earned", "created_at": now_iso(),
+            })
+
     # (4) Driver offline bila tak ada tugas aktif lain.
     did = trip.get("driver_id")
     if did:
@@ -172,6 +191,25 @@ async def finalize_trip_completion(db, trip: dict, user=None, odometer_end=None)
             await db.drivers.update_one({"id": did}, {"$set": {"status": "offline"}})
 
     return safe_doc(await db.trips.find_one({"id": trip_id}, {"_id": 0}))
+
+
+async def recompute_trip_fee(db, booking_id, start_iso, end_iso):
+    """Fee /hari disnapshot saat assign — hitung ULANG days/total saat tanggal berubah
+    (reschedule). Hanya trip AKTIF; trip completed sudah dikreditkan & tak boleh berubah."""
+    try:
+        from datetime import datetime
+        s = datetime.fromisoformat(str(start_iso).replace("Z", "+00:00"))
+        e = datetime.fromisoformat(str(end_iso).replace("Z", "+00:00"))
+        days = max(1, int(-(-(e - s).total_seconds() // 86400)))
+    except Exception:  # noqa: BLE001
+        return
+    trips = await db.trips.find({"booking_id": booking_id, "status": {"$in": _ACTIVE_TRIP_STATUSES}},
+                                {"_id": 0, "id": 1, "driver_fee_rate": 1}).to_list(20)
+    for t in trips:
+        rate = float(t.get("driver_fee_rate") or 0)
+        if rate > 0:
+            await db.trips.update_one({"id": t["id"]}, {"$set": {
+                "driver_fee_days": days, "driver_fee_total": money(rate * days)}})
 
 
 async def release_booking_resources(db, booking):

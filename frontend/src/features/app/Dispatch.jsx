@@ -9,6 +9,7 @@ import { useAuth } from "@/context/AuthContext";
 import { LoadingState, EmptyState, ErrorState } from "@/components/shared/DataStates";
 import AssignTripDialog from "@/components/app/AssignTripDialog";
 import PodDialog from "@/components/app/PodDialog";
+import DispatchDetailDialog from "@/components/app/DispatchDetailDialog";
 import { formatQty } from "@/utils/formatters";
 
 const BK_STATUS = { confirmed: ["Dikonfirmasi", "info"], ongoing: ["Berjalan", "warning"], completed: ["Selesai", "success"], pending: ["Pending", "neutral"], cancelled: ["Batal", "neutral"] };
@@ -40,18 +41,26 @@ export default function Dispatch() {
   const [busy, setBusy] = useState("");
   const [assignTarget, setAssignTarget] = useState(null);
   const [podTarget, setPodTarget] = useState(null);
+  const [detailId, setDetailId] = useState(null);
 
-  const load = useCallback(async () => {
-    setLoading(true); setError(null);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) { setLoading(true); setError(null); }
     try {
       const r = await apiClient.get(`/dispatch/today?date=${date}`);
       setData(r.data);
     } catch (e) {
-      setError(e?.response?.data?.detail || "Gagal memuat papan operasi");
-    } finally { setLoading(false); }
+      if (!silent) setError(e?.response?.data?.detail || "Gagal memuat papan operasi");
+    } finally { if (!silent) setLoading(false); }
   }, [date]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Sinkron dgn aksi DRIVER: papan menyegarkan diri tiap 20 dtk (senyap, tanpa flicker)
+  // agar perubahan dari Ruang Kerja Driver terlihat tanpa perlu refresh manual.
+  useEffect(() => {
+    const t = setInterval(() => { if (!document.hidden) load(true); }, 20000);
+    return () => clearInterval(t);
+  }, [load]);
 
   const act = async (key, fn, okMsg) => {
     setBusy(key);
@@ -110,7 +119,9 @@ export default function Dispatch() {
                   const bk = BK_STATUS[r.status] || [r.status, "neutral"];
                   const tr = r.trip_status ? (TRIP_STATUS[r.trip_status] || [r.trip_status, "neutral"]) : null;
                   return (
-                    <tr key={r.id} className="border-b border-[#F6F6F8] align-top hover:bg-[#FAFAFB]" data-testid={`dispatch-row-${r.id}`}>
+                    <tr key={r.id} className="cursor-pointer border-b border-[#F6F6F8] align-top hover:bg-[#FAFAFB]"
+                      onClick={() => setDetailId(r.id)} title="Klik untuk lihat detail & timeline"
+                      data-testid={`dispatch-row-${r.id}`}>
                       <td className="px-4 py-3">
                         <div className="font-bold text-[#1C1C1E]">{r.code}</div>
                         <div className="text-[11.5px] text-[#6B6B73]">{r.customer_name}</div>
@@ -135,7 +146,7 @@ export default function Dispatch() {
                           {r.pod ? <span className="status-pill tone-info"><ClipboardCheck size={11} /> POD</span> : null}
                         </div>
                       </td>
-                      <td className="px-3 py-3">
+                      <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                         {canManage ? (
                           <div className="flex flex-wrap justify-end gap-1.5">
                             <button className="secondary-button !h-8 !px-2.5" onClick={() => setAssignTarget(r)} data-testid={`dispatch-assign-${r.id}`}><UserPlus size={13} /> {r.assigned ? "Ubah" : "Assign"}</button>
@@ -166,6 +177,7 @@ export default function Dispatch() {
 
       <AssignTripDialog open={Boolean(assignTarget)} onOpenChange={(v) => !v && setAssignTarget(null)} booking={assignTarget} onSaved={load} />
       <PodDialog open={Boolean(podTarget)} onOpenChange={(v) => !v && setPodTarget(null)} trip={podTarget ? { id: podTarget.trip_id, pod: podTarget.pod ? {} : null } : null} onSaved={load} />
+      <DispatchDetailDialog open={Boolean(detailId)} onOpenChange={(v) => !v && setDetailId(null)} bookingId={detailId} />
     </div>
   );
 }

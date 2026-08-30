@@ -700,6 +700,8 @@ async def reschedule_booking(booking_id: str, body: BookingReschedule, user=Depe
     await db.trips.update_many(
         {"booking_id": booking_id, "status": {"$in": ["standby", "to_pickup"]}},
         {"$set": {"vehicle_id": vehicle_id, "dest_name": booking.get("destination")}})
+    from services.trips import recompute_trip_fee
+    await recompute_trip_fee(db, booking_id, start_iso, end_iso)  # fee /hari ikut tanggal baru
     res = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     await record(db, actor=user, action="reschedule", entity_type="booking", entity_id=booking_id,
                  summary=f"Jadwal ulang booking {res.get('code')}: {(old_start or '')[:16]} → {start_iso[:16]}")

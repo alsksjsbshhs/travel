@@ -67,11 +67,19 @@ async def _resolve_driver(db, user):
     return await resolve_driver(db, user)
 
 
+async def _target_driver(db, user, driver_id=None):
+    """Driver efektif utk permukaan baca: owner/ops_admin boleh MELIHAT-SEBAGAI driver lain
+    (override admin) via query driver_id; peran lain selalu dipetakan ke dirinya sendiri."""
+    if driver_id and user.get("role") in ("owner", "ops_admin"):
+        return await db.drivers.find_one({"id": driver_id}, {"_id": 0})
+    return await _resolve_driver(db, user)
+
+
 @router.get("/driver/my-trips")
 async def my_trips(limit: int = Query(default=200, le=500), skip: int = Query(default=0, ge=0),
-                   user=Depends(WORKSPACE)):
+                   driver_id: str = Query(default=None), user=Depends(WORKSPACE)):
     db = get_db()
-    drv = await _resolve_driver(db, user)
+    drv = await _target_driver(db, user, driver_id)
     if not drv:
         return []
     docs = await db.trips.find({"driver_id": drv["id"]}, {"_id": 0}).sort("created_at", -1).skip(skip).to_list(limit)
@@ -158,12 +166,13 @@ async def checkout(body: CheckinRequest, user=Depends(WORKSPACE)):
 
 
 # === E8: Driver Workspace (jadwal tugas, konfirmasi, navigasi, POD) ===
-async def _owned_trip(db, trip_id, drv):
-    """Ambil trip milik driver yang login. 404 bila tak ada, 403 bila bukan miliknya."""
+async def _owned_trip(db, trip_id, drv, manager=False):
+    """Ambil trip milik driver yang login. 404 bila tak ada, 403 bila bukan miliknya.
+    manager=True (owner/ops_admin) boleh bertindak atas nama driver (override admin)."""
     trip = await db.trips.find_one({"id": trip_id}, {"_id": 0})
     if not trip:
         raise HTTPException(status_code=404, detail="Trip tidak ditemukan")
-    if trip.get("driver_id") != drv["id"]:
+    if not manager and trip.get("driver_id") != (drv or {}).get("id"):
         raise HTTPException(status_code=403, detail="Trip ini bukan tugas Anda")
     return trip
 
@@ -197,9 +206,10 @@ async def _task_from_trip(db, trip):
 
 
 @router.get("/driver/tasks")
-async def my_tasks(limit: int = Query(default=200, le=500), user=Depends(WORKSPACE)):
+async def my_tasks(limit: int = Query(default=200, le=500), driver_id: str = Query(default=None),
+                   user=Depends(WORKSPACE)):
     db = get_db()
-    drv = await _resolve_driver(db, user)
+    drv = await _target_driver(db, user, driver_id)
     if not drv:
         return []
     trips = await db.trips.find({"driver_id": drv["id"]}, {"_id": 0}).sort("created_at", -1).to_list(limit)
@@ -207,9 +217,9 @@ async def my_tasks(limit: int = Query(default=200, le=500), user=Depends(WORKSPA
 
 
 @router.get("/driver/summary")
-async def my_summary(user=Depends(WORKSPACE)):
+async def my_summary(driver_id: str = Query(default=None), user=Depends(WORKSPACE)):
     db = get_db()
-    drv = await _resolve_driver(db, user)
+    drv = await _target_driver(db, user, driver_id)
     if not drv:
         return {"is_driver": False, "today": 0, "active": 0, "completed": 0, "need_pod": 0, "total": 0}
     trips = await db.trips.find({"driver_id": drv["id"]}, {"_id": 0}).to_list(500)
@@ -229,10 +239,11 @@ async def my_summary(user=Depends(WORKSPACE)):
 @router.post("/driver/tasks/{trip_id}/ack")
 async def ack_task(trip_id: str, user=Depends(WORKSPACE)):
     db = get_db()
+    is_manager = user.get("role") in ("owner", "ops_admin")
     drv = await _resolve_driver(db, user)
-    if not drv:
+    if not is_manager and not drv:
         raise HTTPException(status_code=403, detail="Akun Anda belum tertaut ke data driver")
-    trip = await _owned_trip(db, trip_id, drv)
+    trip = await _owned_trip(db, trip_id, drv, manager=is_manager)
     await db.trips.update_one({"id": trip_id}, {"$set": {"driver_ack_at": now_iso()}})
     await record(db, actor=user, action="trip_ack", entity_type="trip", entity_id=trip_id,
                  summary="Driver mengonfirmasi tugas")
@@ -242,10 +253,11 @@ async def ack_task(trip_id: str, user=Depends(WORKSPACE)):
 @router.post("/driver/tasks/{trip_id}/arrived")
 async def arrived_task(trip_id: str, user=Depends(WORKSPACE)):
     db = get_db()
+    is_manager = user.get("role") in ("owner", "ops_admin")
     drv = await _resolve_driver(db, user)
-    if not drv:
+    if not is_manager and not drv:
         raise HTTPException(status_code=403, detail="Akun Anda belum tertaut ke data driver")
-    trip = await _owned_trip(db, trip_id, drv)
+    trip = await _owned_trip(db, trip_id, drv, manager=is_manager)
     await db.trips.update_one({"id": trip_id}, {"$set": {"arrived_at": now_iso()}})
     if trip.get("booking_id"):
         await _emit_trip(db, trip["booking_id"], "trip.arrived")
@@ -259,10 +271,11 @@ async def upload_pod(trip_id: str, photo: UploadFile = File(default=None),
                      recipient_name: str = Form(default=""), note: str = Form(default=""),
                      user=Depends(WORKSPACE)):
     db = get_db()
+    is_manager = user.get("role") in ("owner", "ops_admin")
     drv = await _resolve_driver(db, user)
-    if not drv:
+    if not is_manager and not drv:
         raise HTTPException(status_code=403, detail="Akun Anda belum tertaut ke data driver")
-    await _owned_trip(db, trip_id, drv)
+    await _owned_trip(db, trip_id, drv, manager=is_manager)
     photo_url = None
     if photo is not None:
         ext = ALLOWED_IMG.get((photo.content_type or "").lower())

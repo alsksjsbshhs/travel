@@ -102,6 +102,8 @@ PURGE_COLLECTIONS = (
     # CMS-10/11/12 — riwayat versi, Tempat Sampah, dan tabel pengalihan URL. Semuanya
     # TERLIHAT pengguna di CMS: kalau artefak uji tertinggal, editor melihat riwayat &
     # tempat sampah berisi konten hantu yang tak pernah ia buat.
+    # Master add-on booking + fee driver per keberangkatan + pencairan fee.
+    "addons", "driver_fee_entries", "driver_withdrawals",
     "content_versions", "content_trash", "content_redirects",
 )
 

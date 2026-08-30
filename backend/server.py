@@ -14,6 +14,8 @@ load_dotenv(Path(__file__).parent / ".env")
 
 from db import close, get_db  # noqa: E402
 from routers import (  # noqa: E402
+    addons,
+    driver_fees,
     ads,
     ads_manage,
     analytics,
@@ -121,6 +123,8 @@ app.include_router(maintenance.router)
 app.include_router(workshops.router)
 app.include_router(service_types.router)
 app.include_router(payroll.router)
+app.include_router(addons.router)
+app.include_router(driver_fees.router)
 app.include_router(partners.router)
 app.include_router(subcharters.router)
 app.include_router(shares.router)

@@ -45,6 +45,23 @@ async def _vehicle_or_400(db, vehicle_id):
     return v
 
 
+async def _restore_vehicle_if_free(db, vehicle_id, exclude_id=None):
+    """Kembalikan armada 'available' HANYA bila tak ada perawatan in_progress LAIN.
+
+    Cacat logic lama: selesai/hapus/ubah SATU catatan langsung memulihkan armada padahal
+    catatan in_progress lain utk armada yang sama masih berjalan → status armada tidak
+    sinkron dgn kenyataan bengkel (armada 'available' padahal masih dibongkar)."""
+    q = {"vehicle_id": vehicle_id, "status": "in_progress"}
+    if exclude_id:
+        q["id"] = {"$ne": exclude_id}
+    if await db.maintenance_records.find_one(q, {"_id": 0, "id": 1}):
+        return False
+    veh = await db.vehicles.find_one({"id": vehicle_id}, {"_id": 0, "status": 1})
+    if veh and veh.get("status") == "maintenance":
+        await db.vehicles.update_one({"id": vehicle_id}, {"$set": {"status": "available"}})
+    return True
+
+
 def _blocking_window(status, start_date, end_date) -> bool:
     """True bila window perawatan ini MEMBLOK ketersediaan armada (INV-21)."""
     return bool(status in MAINT_BLOCKING_STATUSES and start_date and end_date)
@@ -218,9 +235,7 @@ async def update_maintenance(maintenance_id: str, body: MaintenanceUpdate, user=
     if doc.get("status") == "in_progress":
         await db.vehicles.update_one({"id": doc["vehicle_id"]}, {"$set": {"status": "maintenance"}})
     elif doc.get("status") in ("done", "cancelled"):
-        veh = await db.vehicles.find_one({"id": doc["vehicle_id"]}, {"_id": 0})
-        if veh and veh.get("status") == "maintenance":
-            await db.vehicles.update_one({"id": doc["vehicle_id"]}, {"$set": {"status": "available"}})
+        await _restore_vehicle_if_free(db, doc["vehicle_id"], exclude_id=maintenance_id)
     await record(db, actor=user, action="update", entity_type="maintenance", entity_id=maintenance_id,
                  before=rec, after=doc, summary=f"Ubah perawatan {doc.get('title')}")
     return safe_doc(doc)
@@ -239,11 +254,9 @@ async def complete_maintenance(maintenance_id: str, body: MaintenanceComplete, u
     if body.note:
         updates["note"] = body.note
     await db.maintenance_records.update_one({"id": maintenance_id}, {"$set": updates})
-    # Update armada: kembalikan available + catat servis terakhir (untuk type servis).
+    # Update armada: kembalikan available (bila tak ada perawatan aktif lain) + catat servis terakhir.
+    await _restore_vehicle_if_free(db, rec["vehicle_id"], exclude_id=maintenance_id)
     veh_updates = {}
-    veh = await db.vehicles.find_one({"id": rec["vehicle_id"]}, {"_id": 0})
-    if veh and veh.get("status") == "maintenance":
-        veh_updates["status"] = "available"
     if rec.get("type") == "servis":
         veh_updates["last_service_date"] = completed_at
         if body.odometer is not None:
@@ -263,10 +276,8 @@ async def delete_maintenance(maintenance_id: str, user=Depends(MANAGER)):
     if not rec:
         raise HTTPException(status_code=404, detail="Catatan perawatan tidak ditemukan")
     await db.maintenance_records.delete_one({"id": maintenance_id})
-    # Bila armada masih 'maintenance' karena record ini, kembalikan available.
-    veh = await db.vehicles.find_one({"id": rec["vehicle_id"]}, {"_id": 0})
-    if veh and veh.get("status") == "maintenance":
-        await db.vehicles.update_one({"id": rec["vehicle_id"]}, {"$set": {"status": "available"}})
+    # Bila armada masih 'maintenance' & tak ada perawatan in_progress lain → available.
+    await _restore_vehicle_if_free(db, rec["vehicle_id"], exclude_id=maintenance_id)
     await record(db, actor=user, action="delete", entity_type="maintenance", entity_id=maintenance_id,
                  before=rec, summary=f"Hapus perawatan {rec.get('title')} ({rec.get('vehicle_name')})")
     return {"deleted": True, "id": maintenance_id}

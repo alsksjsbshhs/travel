@@ -66,6 +66,17 @@ async def _trip_for(db, booking_id):
     return await db.trips.find_one({"booking_id": booking_id}, {"_id": 0})
 
 
+def _fee_days(bk):
+    """Jumlah hari keberangkatan (pembulatan ke atas, min 1) utk fee driver per hari."""
+    try:
+        s = datetime.fromisoformat(str(bk.get("start_datetime")).replace("Z", "+00:00"))
+        e = datetime.fromisoformat(str(bk.get("end_datetime")).replace("Z", "+00:00"))
+        secs = (e - s).total_seconds()
+        return max(1, int(-(-secs // 86400)))
+    except Exception:  # noqa: BLE001
+        return 1
+
+
 async def _enrich(db, bk):
     trip = await _trip_for(db, bk["id"])
     drv = None
@@ -103,6 +114,37 @@ async def dispatch_today(date: str = Query(default=None), user=Depends(DISPATCH)
         "completed": sum(1 for r in rows if r["status"] == "completed"),
     }
     return {"date": d, "summary": summary, "departures": safe_doc(rows)}
+
+
+@router.get("/dispatch/{booking_id}/detail")
+async def dispatch_detail(booking_id: str, user=Depends(DISPATCH)):
+    """Detail satu keberangkatan utk papan operasi: booking + trip + kontak + timeline
+    kronologis (sinkron dgn aksi driver — kedua sisi menulis dokumen trip yang SAMA)."""
+    db = get_db()
+    bk = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not bk:
+        raise HTTPException(status_code=404, detail="Booking tidak ditemukan")
+    trip = await _trip_for(db, booking_id) or {}
+    drv = None
+    if bk.get("driver_id"):
+        drv = await db.drivers.find_one({"id": bk["driver_id"]}, {"_id": 0, "name": 1, "phone": 1, "status": 1})
+    cust = None
+    if bk.get("customer_id"):
+        cust = await db.customers.find_one({"id": bk["customer_id"]}, {"_id": 0, "name": 1, "phone": 1})
+    pairs = [
+        ("Booking dibuat", bk.get("created_at"), "system"),
+        ("Driver & unit di-assign", trip.get("assigned_at"), "ops"),
+        ("Keberangkatan dikonfirmasi (WA ke pelanggan)", bk.get("departure_confirmed_at"), "ops"),
+        ("Driver mengonfirmasi tugas", trip.get("driver_ack_at"), "driver"),
+        ("Berangkat menjemput", trip.get("enroute_at") or trip.get("start_at"), "driver"),
+        ("Tiba di tujuan", trip.get("arrived_at"), "driver"),
+        ("Trip selesai", trip.get("end_at"), "driver"),
+        ("Bukti layanan (POD) diunggah", (trip.get("pod") or {}).get("at"), "driver"),
+    ]
+    timeline = [{"label": lbl, "at": at, "actor": act} for lbl, at, act in pairs if at]
+    timeline.sort(key=lambda x: x["at"])
+    return {"booking": safe_doc(bk), "trip": safe_doc(trip or None),
+            "driver": safe_doc(drv), "customer": safe_doc(cust), "timeline": timeline}
 
 
 @router.post("/dispatch/{booking_id}/assign")
@@ -162,6 +204,20 @@ async def assign_trip(booking_id: str, body: AssignTripRequest, user=Depends(DIS
             "est_distance_km": est_km,
             "assigned_at": now_iso(),
         }
+        # Fee driver PER KEBERANGKATAN: rate /hari bisa beda tiap assign; snapshot di trip
+        # (dikreditkan ke saldo driver saat trip selesai — services.trips).
+        # Semantik eksplisit: None = tidak diubah; 0 = HAPUS fee; >0 = set/ganti rate.
+        if body.driver_fee_rate is not None:
+            if float(body.driver_fee_rate) > 0:
+                fee_days = _fee_days(bk)
+                trip_set.update({
+                    "driver_fee_rate": money(body.driver_fee_rate),
+                    "driver_fee_days": fee_days,
+                    "driver_fee_total": money(float(body.driver_fee_rate) * fee_days),
+                })
+            else:
+                trip_set.update({"driver_fee_rate": None, "driver_fee_days": None,
+                                 "driver_fee_total": None})
         if trip:
             await db.trips.update_one({"id": trip["id"]}, {"$set": trip_set})
             trip_id = trip["id"]

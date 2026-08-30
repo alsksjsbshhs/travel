@@ -106,7 +106,7 @@ export default function Maintenance() {
     const cols = [
       { key: "vehicle_name", label: "Armada", render: (r) => <span className="font-semibold text-[#1C1C1E]">{r.vehicle_name || r.vehicle_id}</span> },
       { key: "type", label: "Jenis", render: (r) => <Pill label={TYPE_LABEL[r.type] || r.type} tone={TYPE_TONE[r.type]} /> },
-      { key: "title", label: "Pekerjaan", render: (r) => <span>{r.title}{r.workshop ? <span className="block text-[11px] text-[#8E8E93]">{r.workshop}</span> : null}</span> },
+      { key: "title", label: "Pekerjaan", render: (r) => <span>{r.title}</span> },
       { key: "sched", label: "Jadwal", render: (r) => scheduleLabel(r) },
           { key: "workshop", label: "Bengkel", render: (r) => (
       r.workshop ? <span className="truncate" title={r.workshop}>{r.workshop}</span>

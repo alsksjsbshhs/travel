@@ -17,6 +17,7 @@ import PaymentDialog from "@/components/app/PaymentDialog";
 import FinanceReconciliation from "@/components/app/FinanceReconciliation";
 import FinanceCashflow from "@/components/app/FinanceCashflow";
 import PayrollManager from "@/components/app/PayrollManager";
+import DriverWithdrawalsPanel from "@/components/app/DriverWithdrawalsPanel";
 import { useAuth } from "@/context/AuthContext";
 import { canAccess } from "@/config/navigationConfig";
 
@@ -28,6 +29,7 @@ const TABS = [
   ["recon", "Rekonsiliasi", GitCompareArrows],
   ["cashflow", "Arus Kas", Waves],
   ["payroll", "Payroll", Users],
+  ["fees", "Fee Driver", Banknote],
 ];
 const CAT_LABEL = { bbm: "BBM / Solar", tol: "Tol & Parkir", uang_jalan: "Uang Jalan", gaji_driver: "Gaji/Komisi Driver", other: "Lainnya" };
 const INV_STATUS = {
@@ -149,6 +151,7 @@ export default function Finance() {
       {tab === "recon" && <FinanceReconciliation onChanged={loadSummary} />}
       {tab === "cashflow" && <FinanceCashflow />}
       {tab === "payroll" && <PayrollManager />}
+      {tab === "fees" && <DriverWithdrawalsPanel />}
     </div>
   );
 }

@@ -1,19 +1,23 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, MapPin, User2, Bus } from "lucide-react";
+import { Loader2, MapPin, User2, Bus, Wallet } from "lucide-react";
 import apiClient from "@/services/apiClient";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { formatCurrency } from "@/utils/formatters";
 
 // AssignTripDialog — E3: pilih driver + unit untuk sebuah booking; tujuan di-geocode otomatis (Nominatim).
+// Fee driver /hari opsional per keberangkatan (masuk saldo driver saat trip selesai).
 export default function AssignTripDialog({ open, onOpenChange, booking, onSaved }) {
   const [drivers, setDrivers] = useState([]);
   const [vehicles, setVehicles] = useState([]);
   const [driverId, setDriverId] = useState("");
   const [vehicleId, setVehicleId] = useState("");
+  const [feeRate, setFeeRate] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -26,7 +30,25 @@ export default function AssignTripDialog({ open, onOpenChange, booking, onSaved 
       .catch(() => {});
     setDriverId(booking?.driver_id || "");
     setVehicleId(booking?.vehicle_id || "");
+    setFeeRate("");
+    // Prefill rate fee yang sudah tersimpan (re-assign) — kosong = fee dihapus, jadi harus
+    // terlihat nilai lamanya agar tidak terhapus tanpa sadar.
+    if (booking?.id) {
+      apiClient.get(`/dispatch/${booking.id}/detail`)
+        .then((r) => {
+          const rate = r.data?.trip?.driver_fee_rate;
+          if (rate) setFeeRate(String(rate));
+        })
+        .catch(() => {});
+    }
   }, [open, booking]);
+
+  const feeDays = (() => {
+    const s = new Date(booking?.start_datetime || "").getTime();
+    const e = new Date(booking?.end_datetime || "").getTime();
+    if (!s || !e || e <= s) return 1;
+    return Math.max(1, Math.ceil((e - s) / 86400000));
+  })();
 
   const submit = async () => {
     if (!driverId) { toast.error("Pilih driver terlebih dahulu"); return; }
@@ -35,6 +57,7 @@ export default function AssignTripDialog({ open, onOpenChange, booking, onSaved 
     try {
       const r = await apiClient.post(`/dispatch/${booking.id}/assign`, {
         driver_id: driverId, vehicle_id: vehicleId,
+        driver_fee_rate: Number(feeRate) > 0 ? Number(feeRate) : 0,
       });
       const geo = r.data?.geocode;
       toast.success(geo ? `Trip dijadwalkan · tujuan terpetakan: ${geo.display_name}`
@@ -80,6 +103,16 @@ export default function AssignTripDialog({ open, onOpenChange, booking, onSaved 
                 {vehicles.map((v) => <SelectItem key={v.id} value={v.id}>{v.code ? `${v.code} · ` : ""}{v.name}</SelectItem>)}
               </SelectContent>
             </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label><Wallet size={12} className="mr-1 inline" /> Fee Driver /hari (Rp) — opsional</Label>
+            <Input type="number" min="0" value={feeRate} onChange={(e) => setFeeRate(e.target.value)}
+              placeholder="mis. 150000 (kosong = tanpa fee)" data-testid="assign-fee-rate" />
+            {Number(feeRate) > 0 ? (
+              <p className="text-[11.5px] text-[#6B6B73]" data-testid="assign-fee-estimate">
+                Estimasi fee: <b className="tabular-nums text-[#0F5227]">{formatCurrency(Number(feeRate) * feeDays)}</b> ({formatCurrency(Number(feeRate))} × {feeDays} hari) — masuk saldo driver saat trip selesai.
+              </p>
+            ) : null}
           </div>
         </div>
         <DialogFooter className="mt-2">

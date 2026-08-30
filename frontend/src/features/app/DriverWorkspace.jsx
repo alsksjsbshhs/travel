@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
-import { ClipboardCheck, Activity, CheckCircle2, Camera, RefreshCw, CalendarDays, History } from "lucide-react";
+import { ClipboardCheck, Activity, CheckCircle2, Camera, RefreshCw, CalendarDays, History, UserCog } from "lucide-react";
 import { toast } from "sonner";
 import apiClient from "@/services/apiClient";
 import { useAuth } from "@/context/AuthContext";
 import { LoadingState, EmptyState, ErrorState } from "@/components/shared/DataStates";
 import { formatQty, formatDateTime } from "@/utils/formatters";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import DriverTaskCard from "@/components/app/DriverTaskCard";
 import DriverPodDialog from "@/components/app/DriverPodDialog";
 import DriverNavDialog from "@/components/app/DriverNavDialog";
 import OdometerDialog from "@/components/app/OdometerDialog";
+import DriverFeeCard from "@/components/app/DriverFeeCard";
 
 function StatCard({ icon: Icon, label, value, tone = "#007AFF", testId }) {
   return (
@@ -28,6 +30,10 @@ const WAITING_ST = ["standby", "assigned"];
 
 export default function DriverWorkspace() {
   const { user } = useAuth();
+  // Override admin: owner/ops_admin membuka ruang kerja ATAS NAMA driver terpilih.
+  const isManager = user && (user.role === "owner" || user.role === "ops_admin");
+  const [drivers, setDrivers] = useState([]);
+  const [selDriver, setSelDriver] = useState("");
   const [summary, setSummary] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -38,21 +44,36 @@ export default function DriverWorkspace() {
   const [odo, setOdo] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true); setError(null);
+  useEffect(() => {
+    if (!isManager) return;
+    apiClient.get("/drivers").then((r) => setDrivers(Array.isArray(r.data) ? r.data : [])).catch(() => {});
+  }, [isManager]);
+
+  const qs = isManager && selDriver ? `?driver_id=${encodeURIComponent(selDriver)}` : "";
+
+  const load = useCallback(async (silent = false) => {
+    if (isManager && !selDriver) { setSummary(null); setTasks([]); setLoading(false); setError(null); return; }
+    if (!silent) { setLoading(true); setError(null); }
     try {
       const [s, t] = await Promise.all([
-        apiClient.get("/driver/summary"),
-        apiClient.get("/driver/tasks"),
+        apiClient.get(`/driver/summary${qs}`),
+        apiClient.get(`/driver/tasks${qs}`),
       ]);
       setSummary(s.data || null);
       setTasks(Array.isArray(t.data) ? t.data : []);
     } catch (e) {
-      setError(e?.response?.data?.detail || "Gagal memuat ruang kerja driver");
-    } finally { setLoading(false); }
-  }, []);
+      if (!silent) setError(e?.response?.data?.detail || "Gagal memuat ruang kerja driver");
+    } finally { if (!silent) setLoading(false); }
+  }, [qs, isManager, selDriver]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Sinkron dgn aksi OPS/dispatch: segarkan senyap tiap 25 dtk agar assign/konfirmasi
+  // dari sisi ERP langsung tampil di sisi driver tanpa refresh manual.
+  useEffect(() => {
+    const t = setInterval(() => { if (!document.hidden) load(true); }, 25000);
+    return () => clearInterval(t);
+  }, [load]);
 
   const act = async (task, fn, successMsg) => {
     setBusyId(task.trip_id);
@@ -79,7 +100,7 @@ export default function DriverWorkspace() {
     }
   };
 
-  const notDriver = summary && summary.is_driver === false;
+  const notDriver = !isManager && summary && summary.is_driver === false;
 
   const todayStr = new Date().toISOString().slice(0, 10);
   const byStart = (a, b) => String(a.start_datetime || "").localeCompare(String(b.start_datetime || ""));
@@ -102,13 +123,34 @@ export default function DriverWorkspace() {
 
   return (
     <div className="space-y-5" data-testid="driver-workspace-page">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[13px] text-[#6B6B73]">
-          {notDriver ? "Halaman ini untuk akun driver." : `Tugas perjalanan Anda, ${summary?.driver_name || user?.name || ""}.`}
+          {isManager
+            ? (selDriver ? `Mode admin — Anda melihat & bisa bertindak atas nama ${summary?.driver_name || "driver"}.` : "Mode admin — pilih driver untuk membuka ruang kerjanya.")
+            : notDriver ? "Halaman ini untuk akun driver." : `Tugas perjalanan Anda, ${summary?.driver_name || user?.name || ""}.`}
         </p>
-        <button className="icon-button !h-9 !w-9" title="Muat ulang" onClick={load} data-testid="dw-refresh"><RefreshCw size={15} /></button>
+        <div className="flex items-center gap-2">
+          {isManager ? (
+            <div className="flex items-center gap-1.5" data-testid="dw-driver-picker">
+              <UserCog size={15} className="text-[#007AFF]" />
+              <Select value={selDriver} onValueChange={setSelDriver}>
+                <SelectTrigger className="!h-9 w-[220px]" data-testid="dw-driver-select"><SelectValue placeholder="Pilih driver…" /></SelectTrigger>
+                <SelectContent>
+                  {drivers.length === 0 ? (
+                    <div className="px-3 py-2 text-[12px] text-[#8E8E93]">Belum ada driver terdaftar</div>
+                  ) : drivers.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}{d.phone ? ` · ${d.phone}` : ""}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
+          <button className="icon-button !h-9 !w-9" title="Muat ulang" onClick={() => load()} data-testid="dw-refresh"><RefreshCw size={15} /></button>
+        </div>
       </div>
 
+      {isManager && !selDriver ? (
+        <EmptyState title="Pilih driver dulu" description="Sebagai admin Anda bisa membuka ruang kerja driver mana pun dan meng-override aksinya (konfirmasi, berangkat, tiba, check-out, POD)." testId="dw-pick-driver" />
+      ) : (
+        <>
       {summary && summary.is_driver ? (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="dw-summary">
           <StatCard icon={ClipboardCheck} label="Total Tugas" value={formatQty(summary.total)} testId="dw-stat-total" />
@@ -116,6 +158,10 @@ export default function DriverWorkspace() {
           <StatCard icon={CheckCircle2} label="Selesai" value={formatQty(summary.completed)} tone="#34C759" testId="dw-stat-completed" />
           <StatCard icon={Camera} label="Perlu POD" value={formatQty(summary.need_pod)} tone="#FF3B30" testId="dw-stat-pod" />
         </div>
+      ) : null}
+
+      {(summary && summary.is_driver) ? (
+        <DriverFeeCard driverId={isManager ? selDriver : ""} isManager={isManager} />
       ) : null}
 
       {notDriver ? (
@@ -182,6 +228,8 @@ export default function DriverWorkspace() {
               ) : null}
             </section>
           ) : null}
+        </>
+      )}
         </>
       )}
 

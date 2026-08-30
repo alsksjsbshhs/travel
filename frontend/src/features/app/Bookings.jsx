@@ -8,6 +8,7 @@ import DataTable from "@/components/shared/DataTable";
 import { LoadingState, EmptyState, ErrorState } from "@/components/shared/DataStates";
 import { StatusPill, PaymentPill } from "@/components/shared/StatusPill";
 import BookingFormDialog from "@/components/app/BookingFormDialog";
+import OnlineOrdersPanel from "@/components/app/OnlineOrdersPanel";
 import BookingEditDialog from "@/components/app/BookingEditDialog";
 import BookingRescheduleDialog from "@/components/app/BookingRescheduleDialog";
 import BookingApproveDialog from "@/components/app/BookingApproveDialog";
@@ -31,8 +32,15 @@ export default function Bookings() {
   const [payBooking, setPayBooking] = useState(null);
   const [cancelBooking, setCancelBooking] = useState(null);
   const [busyId, setBusyId] = useState(null);
+  const [srcFilter, setSrcFilter] = useState("all"); // all | online | manual
   const rows = Array.isArray(data) ? data : [];
   const canManage = user && (user.role === "owner" || user.role === "ops_admin");
+  // Pesanan website yang menunggu keputusan → panel inbox di atas (bukan baris tabel biasa).
+  const onlinePending = canManage ? rows.filter((r) => r.status === "pending" && r.source === "web_booking") : [];
+  const tableRows = rows
+    .filter((r) => !(canManage && r.status === "pending" && r.source === "web_booking"))
+    .filter((r) => srcFilter === "all" ? true
+      : srcFilter === "online" ? r.source === "web_booking" : r.source !== "web_booking");
 
   const ACTION_MSG = { cancel: "Booking dibatalkan", complete: "Booking diselesaikan", reject: "Permintaan booking ditolak" };
   const act = async (id, action) => {
@@ -91,10 +99,12 @@ export default function Bookings() {
       <div className="min-w-0">
         <span className="block truncate text-[#1C1C1E]" title={r.customer_name}>{r.customer_name}</span>
         {/* Sumber pesanan menentukan SOP: pesanan online menunggu DP & bisa hangus sendiri,
-            pesanan buatan ops tidak. Tanpa penanda ini ops tidak bisa membedakannya di daftar. */}
+            pesanan buatan ops tidak. Label WAJIB di kedua sisi agar tak ada ambiguitas. */}
         {r.source === "web_booking" ? (
           <span className="mt-0.5 inline-block rounded-full bg-[#EAF2FF] px-1.5 py-0.5 text-[10px] font-semibold text-[#0058CC]">Online</span>
-        ) : null}
+        ) : (
+          <span className="mt-0.5 inline-block rounded-full bg-[#F1F1F4] px-1.5 py-0.5 text-[10px] font-semibold text-[#6B6B73]">Manual</span>
+        )}
       </div>
     ) },
     { key: "vehicle_name", label: "Armada & sopir", render: (r) => (
@@ -190,8 +200,22 @@ export default function Bookings() {
     </div>
   ) : null;
 
+  const filterChips = (
+    <div className="flex items-center gap-1.5" data-testid="booking-source-filter">
+      {[["all", "Semua"], ["online", "Online"], ["manual", "Manual"]].map(([k, l]) => (
+        <button key={k} onClick={() => setSrcFilter(k)}
+          className={`rounded-full border px-3 py-1 text-[12px] font-semibold transition-colors ${srcFilter === k ? "border-[#007AFF] bg-[#EAF2FF] text-[#0058CC]" : "border-[#E2E3E7] bg-white text-[#6B6B73] hover:border-[#B9D5FF]"}`}
+          data-testid={`booking-filter-${k}`}>{l}</button>
+      ))}
+    </div>
+  );
+
   return (
     <div className="space-y-4" data-testid="bookings-page">
+      {canManage ? (
+        <OnlineOrdersPanel rows={onlinePending} busyId={busyId}
+          onApproveHold={approveHold} onApprove={(r) => setApproveBooking(r)} onReject={(r) => act(r.id, "reject")} />
+      ) : null}
       {canManage ? <PaymentProofsPanel onChanged={reload} /> : null}
       {loading ? (
         <LoadingState testId="bookings-loading" />
@@ -202,8 +226,15 @@ export default function Bookings() {
           <div className="flex justify-end">{createBtn}</div>
           <EmptyState title="Belum ada booking" description="Pemesanan akan muncul di sini setelah dibuat." testId="bookings-empty" action={createBtn} />
         </div>
+      ) : tableRows.length === 0 ? (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">{filterChips}{createBtn}</div>
+          <EmptyState title="Tidak ada booking pada filter ini" description="Ubah filter sumber (Semua / Online / Manual) untuk melihat booking lain." testId="bookings-filter-empty" />
+        </div>
       ) : (
-        <DataTable title="Booking & Trip" icon={CalendarRange} columns={columns} rows={rows} actions={createBtn} footer={`${formatQty(rows.length)} booking`} testId="bookings-table" />
+        <DataTable title="Booking & Trip" icon={CalendarRange} columns={columns} rows={tableRows}
+          actions={<div className="flex items-center gap-3">{filterChips}{createBtn}</div>}
+          footer={`${formatQty(tableRows.length)} booking`} testId="bookings-table" />
       )}
       <BookingFormDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={reload} />
       <GroupBookingDialog open={groupOpen} onOpenChange={setGroupOpen} onCreated={reload} />

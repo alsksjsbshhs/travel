@@ -140,6 +140,8 @@ class CheckinRequest(BaseModel):
 class AssignTripRequest(BaseModel):
     driver_id: str
     vehicle_id: str
+    # Fee driver /hari utk keberangkatan ini (boleh beda tiap keberangkatan; None = tanpa fee).
+    driver_fee_rate: Optional[float] = Field(default=None, ge=0)
 
 
 # === Phase 2: Master Data CRUD ===
